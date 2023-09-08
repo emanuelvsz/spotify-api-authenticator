@@ -8,7 +8,6 @@ import (
 	"test/domain"
 	"test/state"
 
-	// Importa o pacote UUID
 	"github.com/labstack/echo/v4"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/spotify"
@@ -16,10 +15,10 @@ import (
 
 var (
 	oauth2Config = oauth2.Config{
-		ClientID:     "CLIENT_ID",
-		ClientSecret: "CLIENT_SECRET",
+		ClientID:     "3348f4b437614e8b9c742c305eb9865b",
+		ClientSecret: "cd3d51d52a724d18aac6d3910534420c",
 		RedirectURL:  "https://b0be-201-182-186-221.ngrok-free.app/callback",
-		Scopes:       []string{"user-top-read", "user-library-read"},
+		Scopes:       []string{"user-top-read", "user-library-read", "user-read-playback-state", "user-read-playback-position", "user-read-recently-played", "user-read-currently-playing"}, // Adicione as permissões necessárias aqui
 		Endpoint:     spotify.Endpoint,
 	}
 
@@ -68,7 +67,9 @@ func SpotifyCallback(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, "Erro durante a troca do código pelo Token de Acesso")
 	}
 
-	topTracks, err := GetTopTracks(token)
+	log.Printf("Token de Acesso: %+v\n", token)
+
+	topTracks, err := GetTopTracks(token, 10)
 	if err != nil {
 		log.Println("Erro ao obter os top tracks:", err)
 		return c.JSON(http.StatusInternalServerError, "Erro ao obter os top tracks")
@@ -77,8 +78,8 @@ func SpotifyCallback(c echo.Context) error {
 	return c.JSON(http.StatusOK, topTracks)
 }
 
-func GetTopTracks(token *oauth2.Token) ([]domain.Track, error) {
-	apiURL := "https://api.spotify.com/v1/me/top/tracks"
+func GetTopTracks(token *oauth2.Token, limit int) ([]domain.Track, error) {
+	apiURL := fmt.Sprintf("https://api.spotify.com/v1/me/top/tracks?time_range=short_term&limit=%d", limit)
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return nil, err
@@ -89,22 +90,48 @@ func GetTopTracks(token *oauth2.Token) ([]domain.Track, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Println("Erro ao fazer a solicitação HTTP:", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Println("Erro ao obter os top tracks. Status do HTTP:", resp.Status)
 		return nil, fmt.Errorf("Erro ao obter os top tracks: %s", resp.Status)
 	}
 
 	var tracksResponse struct {
-		Items []domain.Track `json:"items"`
+		Items []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Artists []struct {
+				Name string `json:"name"`
+			} `json:"artists"`
+		} `json:"items"`
 	}
 
 	err = json.NewDecoder(resp.Body).Decode(&tracksResponse)
 	if err != nil {
+		log.Println("Erro ao decodificar a resposta JSON:", err)
 		return nil, err
 	}
 
-	return tracksResponse.Items, nil
+	var tracks []domain.Track
+	for _, item := range tracksResponse.Items {
+		// Para simplificar, apenas pegue o primeiro nome do artista, se houver
+		artistName := ""
+		if len(item.Artists) > 0 {
+			artistName = item.Artists[0].Name
+		}
+
+		track := domain.Track{
+			ID:     item.ID,
+			Name:   item.Name,
+			Artist: artistName,
+		}
+		tracks = append(tracks, track)
+	}
+
+	return tracks, nil
 }
+
